@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: stg_cfpb_complaints
+    description: >
+      Cleaned and standardized staging model for CFPB consumer
+      complaints. Converts raw string fields into analytics-ready
+      data types while preserving one row per complaint.
+
+    columns:
+      - name: raw_row_id
+        description: "Technical identifier assigned during raw ingestion."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: complaint_id
+        description: "Unique CFPB complaint identifier."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: product
+        description: "Consumer financial product associated with the complaint."
+        data_tests:
+          - not_null
+
+      - name: issue
+        description: "Primary issue reported by the consumer."
+        data_tests:
+          - not_null
+
+      - name: company
+        description: "Company associated with the consumer complaint."
+        data_tests:
+          - not_null
+
+      - name: received_at
+        description: "Timestamp when CFPB received the complaint."
+        data_tests:
+          - not_null
+
+      - name: source_file
+        description: "Raw source file from which the record was loaded."
+        data_tests:
+          - not_null
+
+      - name: ingested_at
+        description: "Timestamp when the record entered PostgreSQL."
+        data_tests:
+          - not_null

@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: cfpb_raw
+    description: "Raw CFPB consumer complaint data loaded by the Python ingestion pipeline."
+    database: banking_analytics
+    schema: raw
+
+    tables:
+      - name: cfpb_complaints
+        description: "Raw consumer complaint records ingested from the CFPB Consumer Complaint Database API."
+
+        columns:
+          - name: complaint_id
+            description: "Unique complaint identifier assigned by CFPB."
+            data_tests:
+              - not_null
+              - unique
+
+          - name: product
+            description: "Financial product associated with the complaint."
+            data_tests:
+              - not_null
+
+          - name: issue
+            description: "Primary consumer issue associated with the complaint."
+            data_tests:
+              - not_null
+
+          - name: company
+            description: "Company associated with the complaint."
+            data_tests:
+              - not_null
+
+          - name: date_received
+            description: "Date and time the complaint was received by CFPB."
+            data_tests:
+              - not_null
+
+          - name: timely
+            description: "Indicates whether the company provided a timely response."
+            data_tests:
+              - not_null

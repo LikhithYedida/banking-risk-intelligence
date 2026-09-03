@@ -1,0 +1,239 @@
+version: 2
+
+models:
+
+  - name: dim_company
+    description: >
+      Company dimension containing one record for each
+      distinct company represented in the CFPB complaint data.
+
+    columns:
+
+      - name: company_key
+        description: "Deterministic key generated from the normalized company name."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: company_name
+        description: "Company name reported in the CFPB complaint data."
+        data_tests:
+          - not_null
+          - unique
+
+
+  - name: dim_product
+    description: >
+      Product dimension containing one record for each
+      distinct CFPB product and sub-product combination.
+
+    columns:
+
+      - name: product_key
+        description: "Deterministic key generated from the product and sub-product combination."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: product_name
+        description: "Primary CFPB financial product associated with the complaint."
+        data_tests:
+          - not_null
+
+      - name: sub_product_name
+        description: "CFPB sub-product associated with the complaint when available."
+
+
+  - name: dim_issue
+    description: >
+      Issue dimension containing one record for each
+      distinct CFPB issue and sub-issue combination.
+
+    columns:
+
+      - name: issue_key
+        description: "Deterministic key generated from the issue and sub-issue combination."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: issue_name
+        description: "Primary CFPB complaint issue."
+        data_tests:
+          - not_null
+
+      - name: sub_issue_name
+        description: "CFPB complaint sub-issue when available."
+
+
+  - name: dim_date
+    description: >
+      Calendar date dimension used for complaint trend analysis,
+      filtering, and Power BI time intelligence.
+
+    columns:
+
+      - name: date_key
+        description: "Integer date key in YYYYMMDD format."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: calendar_date
+        description: "Calendar date represented by the dimension row."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: year
+        description: "Calendar year."
+        data_tests:
+          - not_null
+
+      - name: quarter
+        description: "Calendar quarter from 1 through 4."
+        data_tests:
+          - not_null
+
+      - name: month_number
+        description: "Calendar month number from 1 through 12."
+        data_tests:
+          - not_null
+
+
+  - name: dim_geography
+    description: >
+      Geography dimension containing one record for each
+      state represented in the CFPB complaint data.
+
+    columns:
+
+      - name: geography_key
+        description: "Deterministic key generated from the normalized state code."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: state_code
+        description: "Two-letter state code or UNKNOWN when state is unavailable."
+        data_tests:
+          - not_null
+          - unique
+
+
+  - name: dim_submission_channel
+    description: >
+      Submission channel dimension containing one record for each
+      method used to submit CFPB complaints.
+
+    columns:
+
+      - name: submission_channel_key
+        description: "Deterministic key generated from the normalized submission channel."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: submission_channel
+        description: "Method used by the consumer to submit the complaint."
+        data_tests:
+          - not_null
+          - unique
+
+
+  - name: fct_complaints
+    description: >
+      Complaint-level fact table used for downstream
+      consumer risk analytics and Power BI reporting.
+
+    columns:
+
+      - name: complaint_id
+        description: "Unique CFPB complaint identifier."
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: company_key
+        description: "Foreign key connecting each complaint to dim_company."
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_company')
+                field: company_key
+
+
+      - name: product_key
+        description: "Foreign key connecting each complaint to dim_product."
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+
+
+      - name: issue_key
+        description: "Foreign key connecting each complaint to dim_issue."
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_issue')
+                field: issue_key
+
+
+      - name: received_date_key
+        description: "Foreign key connecting each complaint to dim_date."
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+
+
+      - name: geography_key
+        description: "Foreign key connecting each complaint to dim_geography."
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_geography')
+                field: geography_key
+
+
+      - name: submission_channel_key
+        description: "Foreign key connecting each complaint to dim_submission_channel."
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_submission_channel')
+                field: submission_channel_key
+
+
+      - name: received_date
+        description: "UTC complaint received date."
+        data_tests:
+          - not_null
+
+
+      - name: timely_response_flag
+        description: "Numeric indicator for timely company response."
+        data_tests:
+          - not_null
+
+
+      - name: untimely_response_flag
+        description: "Numeric indicator for untimely company response."
+        data_tests:
+          - not_null

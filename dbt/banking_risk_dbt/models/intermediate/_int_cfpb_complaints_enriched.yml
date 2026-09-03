@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: int_cfpb_complaints_enriched
+    description: >
+      Enriched CFPB complaint model containing reusable
+      business logic, UTC-based calendar fields, response
+      indicators, and analytical flags.
+
+    columns:
+      - name: raw_row_id
+        description: "Technical identifier inherited from the raw ingestion layer."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: complaint_id
+        description: "Unique CFPB complaint identifier."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: received_date
+        description: "Complaint received date derived consistently in UTC."
+        data_tests:
+          - not_null
+
+      - name: received_month
+        description: "First day of the UTC month in which CFPB received the complaint."
+        data_tests:
+          - not_null
+
+      - name: received_year
+        description: "UTC calendar year in which CFPB received the complaint."
+        data_tests:
+          - not_null
+
+      - name: received_month_number
+        description: "UTC calendar month number from 1 through 12."
+        data_tests:
+          - not_null
+
+      - name: received_quarter
+        description: "UTC calendar quarter from 1 through 4."
+        data_tests:
+          - not_null
+
+      - name: narrative_flag
+        description: "Numeric indicator equal to 1 when a complaint narrative is available and 0 otherwise."
+        data_tests:
+          - not_null
+
+      - name: timely_response_flag
+        description: "Numeric indicator equal to 1 for a timely company response."
+        data_tests:
+          - not_null
+
+      - name: untimely_response_flag
+        description: "Numeric indicator equal to 1 for an untimely company response."
+        data_tests:
+          - not_null
