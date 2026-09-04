@@ -1,15 +1,18 @@
 import re
 import tempfile
-import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
-import truststore
+# Inject Windows certificate store before requests is imported.
+try:
+    import truststore
 
-# Use the Windows certificate store for HTTPS validation.
-truststore.inject_into_ssl()
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -18,664 +21,224 @@ import requests
 # CONFIGURATION
 # ============================================================
 
-BULK_DATA_URL = (
+BULK_FILE_URL = (
     "https://files.consumerfinance.gov/"
     "ccdb/complaints.csv.zip"
 )
 
+RAW_DIRECTORY = Path("data/raw")
+
 TOTAL_RECORDS = 50_000
 
-# Number of rows read from the large CFPB CSV at a time.
-READ_CHUNK_SIZE = 100_000
+MONTH_COUNT = 12
 
-# Download the ZIP in 1 MB pieces.
+CHUNK_SIZE = 200_000
+
+RANDOM_SEED = 42
+
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 
-REQUEST_TIMEOUT = (30, 300)
-
-MAX_RETRIES = 5
-RETRY_BACKOFF_SECONDS = 3
-
 
 # ============================================================
-# COLUMN DEFINITIONS
+# COLUMN CONFIGURATION
 # ============================================================
 
-CANONICAL_COLUMNS = [
-    "date_received",
+OUTPUT_COLUMNS = [
     "product",
-    "sub_product",
-    "issue",
-    "sub_issue",
     "complaint_what_happened",
-    "company_public_response",
-    "company",
-    "state",
+    "date_sent_to_company",
+    "issue",
+    "sub_product",
     "zip_code",
     "tags",
-    "consumer_consent_provided",
-    "submitted_via",
-    "date_sent_to_company",
-    "company_response",
-    "timely",
-    "consumer_disputed",
     "complaint_id",
+    "timely",
+    "company_response",
+    "submitted_via",
+    "company",
+    "date_received",
+    "state",
+    "company_public_response",
+    "sub_issue",
 ]
 
-REQUIRED_COLUMNS = {
-    "date_received",
-    "product",
-    "issue",
-    "company",
-    "submitted_via",
-    "timely",
-    "complaint_id",
+
+COLUMN_RENAME_MAP = {
+    "consumer_complaint_narrative":
+        "complaint_what_happened",
+
+    "company_response_to_consumer":
+        "company_response",
+
+    "timely_response":
+        "timely",
 }
 
 
 # ============================================================
-# NORMALIZE CSV COLUMN NAMES
+# HELPERS
 # ============================================================
 
 def normalize_column_name(column_name):
     """
-    Convert CFPB CSV headers into snake_case names.
-
-    Example:
-        Date received -> date_received
-        ZIP code -> zip_code
-        Timely response? -> timely_response
+    Convert CFPB column names into predictable snake_case.
     """
 
-    normalized = column_name.strip().lower()
+    value = str(column_name).strip().lower()
 
-    normalized = re.sub(
+    value = value.replace("?", "")
+
+    value = re.sub(
         r"[^a-z0-9]+",
         "_",
-        normalized,
+        value,
     )
 
-    return normalized.strip("_")
+    value = value.strip("_")
+
+    return value
 
 
 def normalize_columns(df):
     """
-    Convert CFPB bulk CSV field names into the same structure
-    used by the existing PostgreSQL and dbt pipeline.
+    Normalize original CFPB bulk-file headers and map
+    selected fields to the names used by our pipeline.
     """
 
-    df = df.rename(
-        columns={
-            column: normalize_column_name(column)
-            for column in df.columns
-        }
-    )
-
-    alias_map = {
-        "consumer_complaint_narrative":
-            "complaint_what_happened",
-
-        "company_response_to_consumer":
-            "company_response",
-
-        "timely_response":
-            "timely",
-    }
+    df.columns = [
+        normalize_column_name(column)
+        for column in df.columns
+    ]
 
     df = df.rename(
-        columns=alias_map
+        columns=COLUMN_RENAME_MAP
     )
 
     return df
 
 
-# ============================================================
-# DOWNLOAD CFPB BULK ZIP
-# ============================================================
-
-def download_bulk_file(session, destination):
+def get_sampling_months():
     """
-    Download the official CFPB complaint database ZIP.
-    """
+    Return the previous 12 complete calendar months.
 
-    for attempt in range(
-        1,
-        MAX_RETRIES + 1,
-    ):
-
-        try:
-
-            print(
-                f"\nDownloading CFPB bulk dataset..."
-                f"\nAttempt {attempt}/{MAX_RETRIES}"
-            )
-
-            response = session.get(
-                BULK_DATA_URL,
-                stream=True,
-                timeout=REQUEST_TIMEOUT,
-                headers={
-                    "User-Agent":
-                        "banking-risk-intelligence-project/1.0"
-                },
-            )
-
-            response.raise_for_status()
-
-            total_bytes = int(
-                response.headers.get(
-                    "content-length",
-                    0,
-                )
-            )
-
-            downloaded_bytes = 0
-
-            next_progress = 10
-
-            with open(
-                destination,
-                "wb",
-            ) as file:
-
-                for chunk in response.iter_content(
-                    chunk_size=DOWNLOAD_CHUNK_SIZE
-                ):
-
-                    if not chunk:
-                        continue
-
-                    file.write(chunk)
-
-                    downloaded_bytes += len(chunk)
-
-                    if total_bytes > 0:
-
-                        percentage = (
-                            downloaded_bytes
-                            / total_bytes
-                            * 100
-                        )
-
-                        if percentage >= next_progress:
-
-                            print(
-                                f"Download progress: "
-                                f"{percentage:.0f}%"
-                            )
-
-                            next_progress += 10
-
-            print(
-                "\nBulk ZIP downloaded successfully."
-            )
-
-            print(
-                f"Downloaded: "
-                f"{downloaded_bytes / (1024 * 1024):.2f} MB"
-            )
-
-            return
-
-        except requests.RequestException as error:
-
-            print(
-                "\nDownload failed."
-            )
-
-            print(
-                f"Error: {error}"
-            )
-
-            if attempt == MAX_RETRIES:
-
-                raise RuntimeError(
-                    "Unable to download the CFPB "
-                    "bulk complaint dataset."
-                ) from error
-
-            wait_time = (
-                RETRY_BACKOFF_SECONDS
-                * attempt
-            )
-
-            print(
-                f"Waiting {wait_time} seconds "
-                "before retrying..."
-            )
-
-            time.sleep(
-                wait_time
-            )
-
-
-# ============================================================
-# SELECT LATEST 50,000 COMPLAINTS
-# ============================================================
-
-def extract_latest_records(zip_path):
-    """
-    Read the full CFPB CSV in chunks and retain the latest
-    TOTAL_RECORDS complaints.
-
-    This avoids loading the entire complaint database
-    into memory at once.
+    Example when run in September 2026:
+        2025-09 through 2026-08
     """
 
-    print(
-        "\n========================================"
+    today = pd.Timestamp.today().normalize()
+
+    current_month = today.to_period("M")
+
+    final_complete_month = (
+        current_month - 1
     )
 
-    print(
-        "PROCESSING CFPB DATA"
+    months = pd.period_range(
+        end=final_complete_month,
+        periods=MONTH_COUNT,
+        freq="M",
     )
 
-    print(
-        "========================================"
+    return months
+
+
+def build_month_quotas(months):
+    """
+    Split 50,000 rows as evenly as possible across
+    the 12 complete months.
+    """
+
+    base_quota = (
+        TOTAL_RECORDS // len(months)
     )
 
-    best_records = None
+    remainder = (
+        TOTAL_RECORDS % len(months)
+    )
 
-    total_rows_scanned = 0
+    quotas = {}
 
-    with zipfile.ZipFile(
-        zip_path,
-        "r",
-    ) as archive:
+    for index, month in enumerate(months):
 
-        csv_files = [
-            file_name
-            for file_name in archive.namelist()
-            if file_name.lower().endswith(".csv")
-        ]
-
-        if not csv_files:
-
-            raise RuntimeError(
-                "No CSV file was found "
-                "inside the CFPB ZIP."
-            )
-
-        # If the ZIP ever contains multiple CSV files,
-        # choose the largest one.
-        csv_file = max(
-            csv_files,
-            key=lambda name:
-                archive.getinfo(name).file_size,
+        quotas[str(month)] = (
+            base_quota
+            + (1 if index < remainder else 0)
         )
 
-        print(
-            f"CSV found inside ZIP: {csv_file}"
-        )
+    return quotas
 
-        with archive.open(
-            csv_file
-        ) as file:
 
-            reader = pd.read_csv(
-                file,
-                dtype=str,
-                chunksize=READ_CHUNK_SIZE,
-                low_memory=False,
-            )
+def download_bulk_file(destination):
+    """
+    Download the official CFPB bulk complaints ZIP.
+    """
 
-            for chunk_number, chunk in enumerate(
-                reader,
-                start=1,
+    print("\nDownloading official CFPB bulk dataset...")
+
+    with requests.get(
+        BULK_FILE_URL,
+        stream=True,
+        timeout=120,
+    ) as response:
+
+        response.raise_for_status()
+
+        downloaded_bytes = 0
+
+        with open(destination, "wb") as file:
+
+            for block in response.iter_content(
+                chunk_size=DOWNLOAD_CHUNK_SIZE
             ):
 
-                chunk = normalize_columns(
-                    chunk
-                )
+                if not block:
+                    continue
 
-                if chunk_number == 1:
+                file.write(block)
 
-                    missing_columns = (
-                        REQUIRED_COLUMNS
-                        - set(chunk.columns)
-                    )
+                downloaded_bytes += len(block)
 
-                    if missing_columns:
-
-                        raise ValueError(
-                            "Required CFPB columns "
-                            "are missing: "
-                            f"{sorted(missing_columns)}"
-                        )
-
-                total_rows_scanned += len(
-                    chunk
+                downloaded_mb = (
+                    downloaded_bytes
+                    / 1024
+                    / 1024
                 )
 
                 print(
-                    f"Processing chunk {chunk_number}"
-                    f" | Total source rows scanned: "
-                    f"{total_rows_scanned:,}"
+                    f"\rDownloaded: "
+                    f"{downloaded_mb:,.1f} MB",
+                    end="",
+                    flush=True,
                 )
 
-                # --------------------------------------------
-                # Create sorting fields
-                # --------------------------------------------
-
-                chunk["_received_sort"] = pd.to_datetime(
-                    chunk["date_received"],
-                    errors="coerce",
-                )
-
-                chunk["_complaint_id_sort"] = pd.to_numeric(
-                    chunk["complaint_id"],
-                    errors="coerce",
-                ).fillna(-1)
-
-                # --------------------------------------------
-                # Keep best candidate records
-                # --------------------------------------------
-
-                if best_records is None:
-
-                    candidates = chunk
-
-                else:
-
-                    candidates = pd.concat(
-                        [
-                            best_records,
-                            chunk,
-                        ],
-                        ignore_index=True,
-                    )
-
-                candidates = (
-                    candidates
-                    .sort_values(
-                        by=[
-                            "_received_sort",
-                            "_complaint_id_sort",
-                        ],
-                        ascending=[
-                            False,
-                            False,
-                        ],
-                        na_position="last",
-                    )
-                    .head(TOTAL_RECORDS)
-                    .copy()
-                )
-
-                best_records = candidates
-
-    if best_records is None:
-
-        raise RuntimeError(
-            "No complaint records were read."
-        )
-
-    print(
-        "\nSource rows scanned: "
-        f"{total_rows_scanned:,}"
-    )
-
-    print(
-        "Candidate rows retained: "
-        f"{len(best_records):,}"
-    )
-
-    # Remove temporary sort columns.
-    best_records = best_records.drop(
-        columns=[
-            "_received_sort",
-            "_complaint_id_sort",
-        ],
-        errors="ignore",
-    )
-
-    return best_records
+    print("\nBulk download complete.")
 
 
 # ============================================================
-# PREPARE FINAL RAW DATASET
-# ============================================================
-
-def prepare_dataset(df):
-
-    print(
-        "\nPreparing final 50,000-row dataset..."
-    )
-
-    # Ensure optional source columns always exist.
-    for column in CANONICAL_COLUMNS:
-
-        if column not in df.columns:
-
-            df[column] = None
-
-    df = df[
-        CANONICAL_COLUMNS
-    ].copy()
-
-    if len(df) < TOTAL_RECORDS:
-
-        raise RuntimeError(
-            "The CFPB dataset contained fewer "
-            f"than {TOTAL_RECORDS:,} usable records."
-        )
-
-    df = df.head(
-        TOTAL_RECORDS
-    )
-
-    return df
-
-
-# ============================================================
-# DATA QUALITY CHECKS
-# ============================================================
-
-def validate_dataset(df):
-
-    print(
-        "\n========================================"
-    )
-
-    print(
-        "EXTRACTION QUALITY CHECK"
-    )
-
-    print(
-        "========================================"
-    )
-
-    print(
-        f"Rows extracted: {len(df):,}"
-    )
-
-    print(
-        f"Columns extracted: {len(df.columns)}"
-    )
-
-    # --------------------------------------------------------
-    # Complaint IDs
-    # --------------------------------------------------------
-
-    complaint_ids = (
-        df["complaint_id"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-    )
-
-    missing_complaint_ids = (
-        complaint_ids
-        .eq("")
-        .sum()
-    )
-
-    duplicate_count = (
-        complaint_ids
-        .duplicated()
-        .sum()
-    )
-
-    unique_count = (
-        complaint_ids
-        .nunique()
-    )
-
-    print(
-        f"Unique complaint IDs: "
-        f"{unique_count:,}"
-    )
-
-    print(
-        f"Duplicate complaint IDs: "
-        f"{duplicate_count:,}"
-    )
-
-    print(
-        f"Missing complaint IDs: "
-        f"{missing_complaint_ids:,}"
-    )
-
-    # --------------------------------------------------------
-    # Dates
-    # --------------------------------------------------------
-
-    received_dates = pd.to_datetime(
-        df["date_received"],
-        errors="coerce",
-    )
-
-    invalid_dates = (
-        received_dates
-        .isna()
-        .sum()
-    )
-
-    print(
-        f"Invalid received dates: "
-        f"{invalid_dates:,}"
-    )
-
-    if received_dates.notna().any():
-
-        print(
-            "Earliest complaint date: "
-            f"{received_dates.min().date()}"
-        )
-
-        print(
-            "Latest complaint date: "
-            f"{received_dates.max().date()}"
-        )
-
-    # --------------------------------------------------------
-    # Narrative information
-    # --------------------------------------------------------
-
-    narrative_count = (
-        df["complaint_what_happened"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .ne("")
-        .sum()
-    )
-
-    print(
-        f"Complaints with narratives: "
-        f"{narrative_count:,}"
-    )
-
-    # --------------------------------------------------------
-    # Fail if critical checks fail
-    # --------------------------------------------------------
-
-    if len(df) != TOTAL_RECORDS:
-
-        raise ValueError(
-            f"Expected {TOTAL_RECORDS:,} rows "
-            f"but received {len(df):,}."
-        )
-
-    if missing_complaint_ids > 0:
-
-        raise ValueError(
-            "Missing complaint IDs detected. "
-            "Raw file will NOT be saved."
-        )
-
-    if duplicate_count > 0:
-
-        raise ValueError(
-            "Duplicate complaint IDs detected. "
-            "Raw file will NOT be saved."
-        )
-
-    if invalid_dates > 0:
-
-        raise ValueError(
-            "Invalid complaint dates detected. "
-            "Raw file will NOT be saved."
-        )
-
-    return unique_count
-
-
-# ============================================================
-# SAVE FINAL RAW CSV
-# ============================================================
-
-def save_raw_file(df):
-
-    raw_directory = Path(
-        "data/raw"
-    )
-
-    raw_directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    timestamp = (
-        datetime.now()
-        .strftime("%Y%m%d_%H%M%S")
-    )
-
-    output_file = (
-        raw_directory
-        / f"cfpb_complaints_raw_{timestamp}.csv"
-    )
-
-    df.to_csv(
-        output_file,
-        index=False,
-    )
-
-    return output_file
-
-
-# ============================================================
-# MAIN
+# MAIN PIPELINE
 # ============================================================
 
 def main():
 
-    start_time = time.time()
-
+    print(
+        "\n========================================"
+    )
+    print(
+        "CFPB 12-MONTH ANALYTICAL EXTRACTION"
+    )
     print(
         "========================================"
     )
 
-    print(
-        "CFPB COMPLAINT BULK EXTRACTION"
-    )
+    months = get_sampling_months()
 
-    print(
-        "========================================"
-    )
+    month_strings = [
+        str(month)
+        for month in months
+    ]
 
-    print(
-        "Source: Official CFPB bulk CSV ZIP"
+    quotas = build_month_quotas(
+        months
     )
 
     print(
@@ -683,91 +246,571 @@ def main():
     )
 
     print(
-        "Selection: Latest complaints"
+        f"Complete months: {MONTH_COUNT}"
     )
 
     print(
-        "========================================"
+        "Window:"
+        f" {month_strings[0]}"
+        f" through {month_strings[-1]}"
     )
 
-    session = requests.Session()
+    print(
+        f"Random seed: {RANDOM_SEED}"
+    )
+
+    print(
+        "\nMonthly target:"
+    )
+
+    for month in month_strings:
+
+        print(
+            f"  {month}: "
+            f"{quotas[month]:,}"
+        )
+
+
+    # ========================================================
+    # TEMPORARY BULK ZIP
+    # ========================================================
+
+    temp_directory = Path(
+        tempfile.gettempdir()
+    )
+
+    bulk_zip_path = (
+        temp_directory
+        / "cfpb_complaints_bulk.zip"
+    )
+
 
     try:
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        download_bulk_file(
+            bulk_zip_path
+        )
 
-            zip_path = (
-                Path(temp_dir)
-                / "complaints.csv.zip"
+
+        # ====================================================
+        # OPEN BULK FILE
+        # ====================================================
+
+        print(
+            "\nOpening CFPB bulk ZIP..."
+        )
+
+        with zipfile.ZipFile(
+            bulk_zip_path,
+            "r",
+        ) as archive:
+
+            csv_files = [
+                filename
+                for filename
+                in archive.namelist()
+                if filename.lower().endswith(
+                    ".csv"
+                )
+            ]
+
+            if not csv_files:
+                raise RuntimeError(
+                    "No CSV file found inside "
+                    "the CFPB ZIP archive."
+                )
+
+            csv_filename = (
+                csv_files[0]
             )
 
-            download_bulk_file(
-                session=session,
-                destination=zip_path,
+            print(
+                "CSV inside archive:"
             )
 
-            df = extract_latest_records(
-                zip_path
+            print(
+                csv_filename
             )
+
+
+            # ================================================
+            # SAMPLING STATE
+            # ================================================
+
+            rng = np.random.default_rng(
+                RANDOM_SEED
+            )
+
+            month_samples = {
+                month: pd.DataFrame()
+                for month
+                in month_strings
+            }
+
+            available_rows = {
+                month: 0
+                for month
+                in month_strings
+            }
+
+            total_rows_scanned = 0
+
+            relevant_rows_seen = 0
+
+
+            # ================================================
+            # STREAM CSV IN CHUNKS
+            # ================================================
+
+            with archive.open(
+                csv_filename
+            ) as csv_file:
+
+                chunks = pd.read_csv(
+                    csv_file,
+                    dtype=str,
+                    chunksize=CHUNK_SIZE,
+                    low_memory=False,
+                )
+
+
+                for chunk_number, chunk in enumerate(
+                    chunks,
+                    start=1,
+                ):
+
+                    total_rows_scanned += (
+                        len(chunk)
+                    )
+
+                    chunk = normalize_columns(
+                        chunk
+                    )
+
+
+                    # ========================================
+                    # VERIFY REQUIRED COLUMNS
+                    # ========================================
+
+                    missing_columns = [
+                        column
+                        for column
+                        in OUTPUT_COLUMNS
+                        if column
+                        not in chunk.columns
+                    ]
+
+                    if missing_columns:
+                        raise ValueError(
+                            "Required columns missing "
+                            "from CFPB bulk file: "
+                            f"{missing_columns}"
+                        )
+
+
+                    # ========================================
+                    # DATE FILTER
+                    # ========================================
+
+                    received_dates = pd.to_datetime(
+                        chunk["date_received"],
+                        errors="coerce",
+                    )
+
+                    chunk["_received_date_parsed"] = (
+                        received_dates
+                    )
+
+                    chunk["_received_month"] = (
+                        received_dates
+                        .dt.to_period("M")
+                        .astype(str)
+                    )
+
+                    relevant = chunk[
+                        chunk["_received_month"]
+                        .isin(month_strings)
+                    ].copy()
+
+                    relevant_rows_seen += (
+                        len(relevant)
+                    )
+
+
+                    # ========================================
+                    # MONTH-BY-MONTH RANDOM SAMPLING
+                    # ========================================
+
+                    for month in month_strings:
+
+                        month_rows = relevant[
+                            relevant[
+                                "_received_month"
+                            ]
+                            == month
+                        ].copy()
+
+                        if month_rows.empty:
+                            continue
+
+                        available_rows[month] += (
+                            len(month_rows)
+                        )
+
+
+                        # Remove rows without complaint ID.
+                        month_rows[
+                            "complaint_id"
+                        ] = (
+                            month_rows[
+                                "complaint_id"
+                            ]
+                            .fillna("")
+                            .astype(str)
+                            .str.strip()
+                        )
+
+                        month_rows = month_rows[
+                            month_rows[
+                                "complaint_id"
+                            ]
+                            != ""
+                        ].copy()
+
+                        if month_rows.empty:
+                            continue
+
+
+                        # Generate deterministic random key.
+                        month_rows[
+                            "_sample_key"
+                        ] = rng.random(
+                            len(month_rows)
+                        )
+
+
+                        existing_sample = (
+                            month_samples[
+                                month
+                            ]
+                        )
+
+                        combined = pd.concat(
+                            [
+                                existing_sample,
+                                month_rows,
+                            ],
+                            ignore_index=True,
+                        )
+
+
+                        # Safety against duplicate IDs.
+                        combined = (
+                            combined
+                            .sort_values(
+                                "_sample_key"
+                            )
+                            .drop_duplicates(
+                                subset=[
+                                    "complaint_id"
+                                ],
+                                keep="first",
+                            )
+                        )
+
+
+                        # Keep only the lowest random keys.
+                        combined = (
+                            combined
+                            .nsmallest(
+                                quotas[month],
+                                "_sample_key",
+                            )
+                        )
+
+                        month_samples[
+                            month
+                        ] = combined
+
+
+                    print(
+                        f"Chunk {chunk_number:,} | "
+                        f"Rows scanned: "
+                        f"{total_rows_scanned:,} | "
+                        f"Rows in target window: "
+                        f"{relevant_rows_seen:,}"
+                    )
+
+
+        # ====================================================
+        # VALIDATE MONTHLY SAMPLE
+        # ====================================================
+
+        print(
+            "\n========================================"
+        )
+        print(
+            "MONTHLY SAMPLE VALIDATION"
+        )
+        print(
+            "========================================"
+        )
+
+        for month in month_strings:
+
+            sampled_count = len(
+                month_samples[month]
+            )
+
+            expected_count = (
+                quotas[month]
+            )
+
+            print(
+                f"{month}: "
+                f"{sampled_count:,} sampled "
+                f"/ {available_rows[month]:,} available "
+                f"/ {expected_count:,} required"
+            )
+
+            if sampled_count != expected_count:
+                raise RuntimeError(
+                    f"Month {month} does not "
+                    "contain enough valid records "
+                    "to satisfy the requested "
+                    f"quota of {expected_count:,}."
+                )
+
+
+        # ====================================================
+        # COMBINE MONTHS
+        # ====================================================
+
+        final_df = pd.concat(
+            [
+                month_samples[month]
+                for month
+                in month_strings
+            ],
+            ignore_index=True,
+        )
+
+
+        # ====================================================
+        # FINAL CLEANUP
+        # ====================================================
+
+        helper_columns = [
+            "_received_date_parsed",
+            "_received_month",
+            "_sample_key",
+        ]
+
+        final_df = final_df.drop(
+            columns=[
+                column
+                for column
+                in helper_columns
+                if column
+                in final_df.columns
+            ]
+        )
+
+
+        final_df = final_df[
+            OUTPUT_COLUMNS
+        ].copy()
+
+
+        # ====================================================
+        # FINAL DATA QUALITY
+        # ====================================================
+
+        total_rows = len(
+            final_df
+        )
+
+        unique_ids = (
+            final_df[
+                "complaint_id"
+            ]
+            .nunique()
+        )
+
+        duplicate_ids = (
+            final_df[
+                "complaint_id"
+            ]
+            .duplicated()
+            .sum()
+        )
+
+        parsed_dates = pd.to_datetime(
+            final_df["date_received"],
+            errors="coerce",
+        )
+
+        earliest_date = (
+            parsed_dates.min()
+        )
+
+        latest_date = (
+            parsed_dates.max()
+        )
+
+        distinct_months = (
+            parsed_dates
+            .dt.to_period("M")
+            .nunique()
+        )
+
+
+        print(
+            "\n========================================"
+        )
+        print(
+            "EXTRACTION QUALITY CHECK"
+        )
+        print(
+            "========================================"
+        )
+
+        print(
+            f"Final rows: {total_rows:,}"
+        )
+
+        print(
+            f"Unique complaint IDs: "
+            f"{unique_ids:,}"
+        )
+
+        print(
+            f"Duplicate complaint IDs: "
+            f"{duplicate_ids:,}"
+        )
+
+        print(
+            f"Earliest date: "
+            f"{earliest_date.date()}"
+        )
+
+        print(
+            f"Latest date: "
+            f"{latest_date.date()}"
+        )
+
+        print(
+            f"Distinct months: "
+            f"{distinct_months}"
+        )
+
+
+        if total_rows != TOTAL_RECORDS:
+            raise ValueError(
+                f"Expected {TOTAL_RECORDS:,} "
+                f"records but produced "
+                f"{total_rows:,}."
+            )
+
+        if unique_ids != TOTAL_RECORDS:
+            raise ValueError(
+                "Complaint IDs are not unique."
+            )
+
+        if duplicate_ids != 0:
+            raise ValueError(
+                "Duplicate complaint IDs "
+                "detected."
+            )
+
+        if distinct_months != MONTH_COUNT:
+            raise ValueError(
+                f"Expected {MONTH_COUNT} "
+                "distinct months but found "
+                f"{distinct_months}."
+            )
+
+
+        # ====================================================
+        # SAVE RAW FILE
+        # ====================================================
+
+        RAW_DIRECTORY.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        timestamp = (
+            datetime.now()
+            .strftime(
+                "%Y%m%d_%H%M%S"
+            )
+        )
+
+        output_file = (
+            RAW_DIRECTORY
+            / (
+                "cfpb_complaints_raw_"
+                f"{timestamp}.csv"
+            )
+        )
+
+        final_df.to_csv(
+            output_file,
+            index=False,
+        )
+
+
+        print(
+            "\n========================================"
+        )
+        print(
+            "EXTRACTION COMPLETE"
+        )
+        print(
+            "========================================"
+        )
+
+        print(
+            f"Final rows: "
+            f"{len(final_df):,}"
+        )
+
+        print(
+            f"Unique complaint IDs: "
+            f"{final_df['complaint_id'].nunique():,}"
+        )
+
+        print(
+            "\nRaw file saved successfully:"
+        )
+
+        print(
+            output_file
+        )
+
+        print(
+            "========================================"
+        )
+
 
     finally:
 
-        session.close()
+        # Remove temporary downloaded bulk ZIP.
+        if bulk_zip_path.exists():
 
-    df = prepare_dataset(
-        df
-    )
+            try:
+                bulk_zip_path.unlink()
 
-    unique_count = validate_dataset(
-        df
-    )
+                print(
+                    "\nTemporary CFPB ZIP removed."
+                )
 
-    output_file = save_raw_file(
-        df
-    )
-
-    elapsed_seconds = (
-        time.time()
-        - start_time
-    )
-
-    print(
-        "\n========================================"
-    )
-
-    print(
-        "EXTRACTION COMPLETE"
-    )
-
-    print(
-        "========================================"
-    )
-
-    print(
-        f"Final rows: {len(df):,}"
-    )
-
-    print(
-        f"Unique complaint IDs: "
-        f"{unique_count:,}"
-    )
-
-    print(
-        f"Runtime: "
-        f"{elapsed_seconds / 60:.2f} minutes"
-    )
-
-    print(
-        "\nRaw file saved successfully:"
-    )
-
-    print(
-        output_file
-    )
-
-    print(
-        "========================================"
-    )
+            except PermissionError:
+                print(
+                    "\nWarning: temporary ZIP "
+                    "could not be removed."
+                )
 
 
 if __name__ == "__main__":

@@ -93,7 +93,8 @@ select
 from complaints c
 
 left join companies d
-    on c.company = d.company_name
+    on lower(trim(c.company)) =
+       lower(trim(d.company_name))
 
 left join products p
     on c.product = p.product_name
