@@ -1,0 +1,466 @@
+version: 2
+
+models:
+
+  - name: mart_company_risk
+    description: >
+      Company-level analytical mart containing complaint volume,
+      response performance, portfolio coverage, and company ranking
+      metrics for downstream risk analysis and Power BI reporting.
+
+    columns:
+
+      - name: company_key
+        description: "Foreign key identifying the company."
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_company')
+                field: company_key
+
+      - name: company_name
+        description: "Normalized company name."
+        data_tests:
+          - not_null
+
+      - name: complaint_count
+        description: "Total number of complaints associated with the company."
+        data_tests:
+          - not_null
+
+      - name: complaint_share_pct
+        description: "Percentage of all complaints represented by the company."
+        data_tests:
+          - not_null
+
+      - name: timely_responses
+        description: "Number of complaints with a timely company response."
+        data_tests:
+          - not_null
+
+      - name: untimely_responses
+        description: "Number of complaints with an untimely company response."
+        data_tests:
+          - not_null
+
+      - name: timely_response_pct
+        description: "Percentage of company complaints receiving a timely response."
+        data_tests:
+          - not_null
+
+      - name: untimely_response_pct
+        description: "Percentage of company complaints receiving an untimely response."
+        data_tests:
+          - not_null
+
+      - name: distinct_products
+        description: "Number of distinct CFPB products associated with the company."
+        data_tests:
+          - not_null
+
+      - name: distinct_issues
+        description: "Number of distinct complaint issues associated with the company."
+        data_tests:
+          - not_null
+
+      - name: distinct_states
+        description: "Number of distinct geography keys represented in company complaints."
+        data_tests:
+          - not_null
+
+      - name: company_rank
+        description: "Company rank based on complaint volume."
+        data_tests:
+          - not_null
+
+
+  - name: mart_product_risk
+    description: >
+      Product-level analytical mart containing complaint volume,
+      response performance, company coverage, issue coverage,
+      geographic coverage, and product ranking metrics for
+      downstream risk analysis and Power BI reporting.
+
+    columns:
+
+      - name: product_key
+        description: "Foreign key identifying the product and sub-product combination."
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+
+      - name: product_name
+        description: "Primary CFPB financial product."
+        data_tests:
+          - not_null
+
+      - name: sub_product_name
+        description: "CFPB sub-product when available."
+
+      - name: complaint_count
+        description: "Total number of complaints associated with the product."
+        data_tests:
+          - not_null
+
+      - name: complaint_share_pct
+        description: "Percentage of all complaints represented by the product."
+        data_tests:
+          - not_null
+
+      - name: timely_responses
+        description: "Number of complaints with a timely company response."
+        data_tests:
+          - not_null
+
+      - name: untimely_responses
+        description: "Number of complaints with an untimely company response."
+        data_tests:
+          - not_null
+
+      - name: timely_response_pct
+        description: "Percentage of product complaints receiving a timely response."
+        data_tests:
+          - not_null
+
+      - name: untimely_response_pct
+        description: "Percentage of product complaints receiving an untimely response."
+        data_tests:
+          - not_null
+
+      - name: distinct_companies
+        description: "Number of distinct companies represented for the product."
+        data_tests:
+          - not_null
+
+      - name: distinct_issues
+        description: "Number of distinct complaint issues associated with the product."
+        data_tests:
+          - not_null
+
+      - name: distinct_states
+        description: "Number of distinct geography keys represented for the product."
+        data_tests:
+          - not_null
+
+      - name: product_rank
+        description: "Product rank based on complaint volume."
+        data_tests:
+          - not_null
+
+
+  - name: mart_issue_risk
+    description: >
+      Issue-level analytical mart containing complaint volume,
+      response performance, company exposure, product exposure,
+      geographic coverage, and issue ranking metrics for
+      downstream risk analysis and Power BI reporting.
+
+    columns:
+
+      - name: issue_key
+        description: "Foreign key identifying the issue and sub-issue combination."
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_issue')
+                field: issue_key
+
+      - name: issue_name
+        description: "Primary CFPB complaint issue."
+        data_tests:
+          - not_null
+
+      - name: sub_issue_name
+        description: "CFPB complaint sub-issue when available."
+
+      - name: complaint_count
+        description: "Total number of complaints associated with the issue."
+        data_tests:
+          - not_null
+
+      - name: complaint_share_pct
+        description: "Percentage of all complaints represented by the issue."
+        data_tests:
+          - not_null
+
+      - name: timely_responses
+        description: "Number of issue complaints with a timely company response."
+        data_tests:
+          - not_null
+
+      - name: untimely_responses
+        description: "Number of issue complaints with an untimely company response."
+        data_tests:
+          - not_null
+
+      - name: timely_response_pct
+        description: "Percentage of issue complaints receiving a timely response."
+        data_tests:
+          - not_null
+
+      - name: untimely_response_pct
+        description: "Percentage of issue complaints receiving an untimely response."
+        data_tests:
+          - not_null
+
+      - name: distinct_companies
+        description: "Number of distinct companies represented for the issue."
+        data_tests:
+          - not_null
+
+      - name: distinct_products
+        description: "Number of distinct products represented for the issue."
+        data_tests:
+          - not_null
+
+      - name: distinct_states
+        description: "Number of distinct geography keys represented for the issue."
+        data_tests:
+          - not_null
+
+      - name: issue_rank
+        description: "Issue rank based on complaint volume."
+        data_tests:
+          - not_null
+
+
+  - name: mart_geography_risk
+    description: >
+      Geography-level analytical mart containing complaint volume,
+      response performance, company exposure, product exposure,
+      issue exposure, and state ranking metrics for downstream
+      risk analysis and Power BI reporting.
+
+    columns:
+
+      - name: geography_key
+        description: "Foreign key identifying the complaint geography."
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_geography')
+                field: geography_key
+
+      - name: state_code
+        description: "State code associated with the complaint geography."
+        data_tests:
+          - not_null
+
+      - name: complaint_count
+        description: "Total number of complaints associated with the geography."
+        data_tests:
+          - not_null
+
+      - name: complaint_share_pct
+        description: "Percentage of all complaints represented by the geography."
+        data_tests:
+          - not_null
+
+      - name: timely_responses
+        description: "Number of geography complaints with a timely company response."
+        data_tests:
+          - not_null
+
+      - name: untimely_responses
+        description: "Number of geography complaints with an untimely company response."
+        data_tests:
+          - not_null
+
+      - name: timely_response_pct
+        description: "Percentage of geography complaints receiving a timely response."
+        data_tests:
+          - not_null
+
+      - name: untimely_response_pct
+        description: "Percentage of geography complaints receiving an untimely response."
+        data_tests:
+          - not_null
+
+      - name: distinct_companies
+        description: "Number of distinct companies represented in the geography."
+        data_tests:
+          - not_null
+
+      - name: distinct_products
+        description: "Number of distinct products represented in the geography."
+        data_tests:
+          - not_null
+
+      - name: distinct_issues
+        description: "Number of distinct complaint issues represented in the geography."
+        data_tests:
+          - not_null
+
+      - name: state_rank
+        description: "Geography rank based on complaint volume."
+        data_tests:
+          - not_null
+
+
+  - name: mart_monthly_trend
+    description: >
+      Monthly analytical mart containing complaint volume,
+      month-over-month trends, company response performance,
+      and portfolio coverage metrics for time-series analysis
+      and Power BI reporting.
+
+    columns:
+
+      - name: month_start_date
+        description: "First calendar date representing the analytical month."
+        data_tests:
+          - not_null
+          - unique
+
+      - name: year
+        description: "Calendar year associated with the analytical month."
+        data_tests:
+          - not_null
+
+      - name: month_number
+        description: "Calendar month number from 1 through 12."
+        data_tests:
+          - not_null
+
+      - name: month_name
+        description: "Calendar month name."
+        data_tests:
+          - not_null
+
+      - name: complaint_count
+        description: "Total complaints received during the month."
+        data_tests:
+          - not_null
+
+      - name: previous_month_complaints
+        description: >
+          Complaint volume for the immediately preceding month.
+          Null for the earliest month in the dataset.
+
+      - name: month_over_month_change
+        description: >
+          Absolute change in complaint volume compared with
+          the immediately preceding month.
+
+      - name: month_over_month_growth_pct
+        description: >
+          Percentage change in complaint volume compared with
+          the immediately preceding month.
+
+      - name: timely_responses
+        description: "Number of complaints receiving a timely response during the month."
+        data_tests:
+          - not_null
+
+      - name: untimely_responses
+        description: "Number of complaints receiving an untimely response during the month."
+        data_tests:
+          - not_null
+
+      - name: timely_response_pct
+        description: "Percentage of monthly complaints receiving a timely response."
+        data_tests:
+          - not_null
+
+      - name: untimely_response_pct
+        description: "Percentage of monthly complaints receiving an untimely response."
+        data_tests:
+          - not_null
+
+      - name: distinct_companies
+        description: "Number of distinct companies represented during the month."
+        data_tests:
+          - not_null
+
+      - name: distinct_products
+        description: "Number of distinct products represented during the month."
+        data_tests:
+          - not_null
+
+      - name: distinct_issues
+        description: "Number of distinct issues represented during the month."
+        data_tests:
+          - not_null
+
+      - name: distinct_states
+        description: "Number of distinct geography keys represented during the month."
+        data_tests:
+          - not_null
+  - name: mart_company_risk_score
+    description: >
+      Company-level risk scoring mart that combines complaint volume,
+      issue exposure, product exposure, geographic exposure, and
+      response performance into an explainable relative risk score.
+
+    columns:
+
+      - name: company_key
+        description: "Foreign key identifying the company."
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_company')
+                field: company_key
+
+      - name: company_name
+        description: "Normalized company name."
+        data_tests:
+          - not_null
+
+      - name: complaint_count
+        description: "Total complaints associated with the company."
+        data_tests:
+          - not_null
+
+      - name: complaint_volume_score
+        description: "Normalized complaint-volume component of the risk model."
+        data_tests:
+          - not_null
+
+      - name: product_exposure_score
+        description: "Normalized product exposure component of the risk model."
+        data_tests:
+          - not_null
+
+      - name: issue_exposure_score
+        description: "Normalized issue exposure component of the risk model."
+        data_tests:
+          - not_null
+
+      - name: geography_exposure_score
+        description: "Normalized geographic exposure component of the risk model."
+        data_tests:
+          - not_null
+
+      - name: response_risk_score
+        description: "Normalized untimely-response component of the risk model."
+        data_tests:
+          - not_null
+
+      - name: risk_score
+        description: "Weighted relative company risk score from 0 through 100."
+        data_tests:
+          - not_null
+
+      - name: risk_tier
+        description: "Risk classification of Low, Medium, or High."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Low
+                  - Medium
+                  - High        
