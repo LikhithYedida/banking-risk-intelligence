@@ -2,13 +2,18 @@ version: 2
 
 sources:
   - name: cfpb_raw
-    description: "Raw CFPB consumer complaint data loaded by the Python ingestion pipeline."
+    description: >
+      Raw CFPB consumer complaint data and NLP feature data
+      loaded into PostgreSQL by the Python ingestion pipelines.
+
     database: banking_analytics
     schema: raw
 
     tables:
       - name: cfpb_complaints
-        description: "Raw consumer complaint records ingested from the CFPB Consumer Complaint Database API."
+        description: >
+          Raw consumer complaint records ingested from the
+          CFPB Consumer Complaint Database API.
 
         columns:
           - name: complaint_id
@@ -33,7 +38,7 @@ sources:
               - not_null
 
           - name: date_received
-            description: "Date and time the complaint was received by CFPB."
+            description: "Date the complaint was received by CFPB."
             data_tests:
               - not_null
 
@@ -41,3 +46,69 @@ sources:
             description: "Indicates whether the company provided a timely response."
             data_tests:
               - not_null
+
+
+      - name: complaint_nlp_features
+        description: >
+          Complaint-level NLP features generated from CFPB complaint
+          narratives using TF-IDF, NMF topic modeling, VADER sentiment
+          analysis, and urgency detection.
+
+        columns:
+          - name: complaint_id
+            description: "Unique CFPB complaint identifier."
+            data_tests:
+              - not_null
+              - unique
+
+          - name: date_received
+            description: "Complaint received date."
+
+          - name: month_start_date
+            description: "Month associated with the complaint."
+
+          - name: company
+            description: "Company associated with the narrative."
+
+          - name: product
+            description: "Product associated with the narrative."
+
+          - name: state
+            description: "Consumer state code."
+
+          - name: sentiment_score
+            description: "VADER compound sentiment score."
+            data_tests:
+              - not_null
+
+          - name: sentiment_label
+            description: "Positive, Neutral, or Negative sentiment classification."
+            data_tests:
+              - not_null
+
+          - name: topic_id
+            description: "Numeric NMF topic identifier."
+            data_tests:
+              - not_null
+
+          - name: topic_name
+            description: "Business-friendly NLP topic name."
+            data_tests:
+              - not_null
+
+          - name: topic_keywords
+            description: "Highest-weighted TF-IDF terms associated with the topic."
+
+          - name: urgency_flag
+            description: "Indicates urgency or escalation language."
+            data_tests:
+              - not_null
+
+          - name: urgency_reason
+            description: "Detected urgency or escalation category."
+
+          - name: narrative_word_count
+            description: "Number of words in the cleaned complaint narrative."
+
+          - name: loaded_at
+            description: "Timestamp when the NLP record was loaded into PostgreSQL."

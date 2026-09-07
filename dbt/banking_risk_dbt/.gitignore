@@ -1,5 +1,9 @@
-
-target/
-dbt_packages/
-logs/
 .env
+.venv/
+__pycache__/
+*.pyc
+
+dbt/banking_risk_dbt/target/
+dbt/banking_risk_dbt/logs/
+
+data/raw/*.csv

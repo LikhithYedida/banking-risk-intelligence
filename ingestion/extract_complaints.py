@@ -28,12 +28,16 @@ BULK_FILE_URL = (
 
 RAW_DIRECTORY = Path("data/raw")
 
+# Final analytical sample size.
 TOTAL_RECORDS = 50_000
 
+# Previous 12 complete calendar months.
 MONTH_COUNT = 12
 
+# Read CFPB bulk CSV in chunks.
 CHUNK_SIZE = 200_000
 
+# Makes the random sample reproducible.
 RANDOM_SEED = 42
 
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
@@ -102,7 +106,7 @@ def normalize_column_name(column_name):
 def normalize_columns(df):
     """
     Normalize original CFPB bulk-file headers and map
-    selected fields to the names used by our pipeline.
+    selected fields to names used by our pipeline.
     """
 
     df.columns = [
@@ -129,9 +133,7 @@ def get_sampling_months():
 
     current_month = today.to_period("M")
 
-    final_complete_month = (
-        current_month - 1
-    )
+    final_complete_month = current_month - 1
 
     months = pd.period_range(
         end=final_complete_month,
@@ -140,32 +142,6 @@ def get_sampling_months():
     )
 
     return months
-
-
-def build_month_quotas(months):
-    """
-    Split 50,000 rows as evenly as possible across
-    the 12 complete months.
-    """
-
-    base_quota = (
-        TOTAL_RECORDS // len(months)
-    )
-
-    remainder = (
-        TOTAL_RECORDS % len(months)
-    )
-
-    quotas = {}
-
-    for index, month in enumerate(months):
-
-        quotas[str(month)] = (
-            base_quota
-            + (1 if index < remainder else 0)
-        )
-
-    return quotas
 
 
 def download_bulk_file(destination):
@@ -237,10 +213,6 @@ def main():
         for month in months
     ]
 
-    quotas = build_month_quotas(
-        months
-    )
-
     print(
         f"Target records: {TOTAL_RECORDS:,}"
     )
@@ -260,15 +232,11 @@ def main():
     )
 
     print(
-        "\nMonthly target:"
+        "\nSampling method:"
+        "\n  Uniform random sample across the"
+        "\n  entire 12-month population."
+        "\n  Natural monthly distribution preserved."
     )
-
-    for month in month_strings:
-
-        print(
-            f"  {month}: "
-            f"{quotas[month]:,}"
-        )
 
 
     # ========================================================
@@ -283,7 +251,6 @@ def main():
         temp_directory
         / "cfpb_complaints_bulk.zip"
     )
-
 
     try:
 
@@ -320,9 +287,7 @@ def main():
                     "the CFPB ZIP archive."
                 )
 
-            csv_filename = (
-                csv_files[0]
-            )
+            csv_filename = csv_files[0]
 
             print(
                 "CSV inside archive:"
@@ -341,16 +306,14 @@ def main():
                 RANDOM_SEED
             )
 
-            month_samples = {
-                month: pd.DataFrame()
-                for month
-                in month_strings
-            }
+            # Instead of one sample per month,
+            # maintain ONE global sample.
+            overall_sample = pd.DataFrame()
 
+            # Track actual source distribution.
             available_rows = {
                 month: 0
-                for month
-                in month_strings
+                for month in month_strings
             }
 
             total_rows_scanned = 0
@@ -379,9 +342,7 @@ def main():
                     start=1,
                 ):
 
-                    total_rows_scanned += (
-                        len(chunk)
-                    )
+                    total_rows_scanned += len(chunk)
 
                     chunk = normalize_columns(
                         chunk
@@ -394,10 +355,8 @@ def main():
 
                     missing_columns = [
                         column
-                        for column
-                        in OUTPUT_COLUMNS
-                        if column
-                        not in chunk.columns
+                        for column in OUTPUT_COLUMNS
+                        if column not in chunk.columns
                     ]
 
                     if missing_columns:
@@ -432,167 +391,180 @@ def main():
                         .isin(month_strings)
                     ].copy()
 
-                    relevant_rows_seen += (
-                        len(relevant)
+
+                    # ========================================
+                    # REMOVE INVALID COMPLAINT IDS
+                    # ========================================
+
+                    relevant["complaint_id"] = (
+                        relevant["complaint_id"]
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
                     )
 
+                    relevant = relevant[
+                        relevant["complaint_id"] != ""
+                    ].copy()
+
+                    # Protect against duplicate complaint IDs
+                    # occurring inside the same chunk.
+                    relevant = (
+                        relevant
+                        .drop_duplicates(
+                            subset=["complaint_id"],
+                            keep="first",
+                        )
+                    )
+
+                    relevant_rows_seen += len(relevant)
+
 
                     # ========================================
-                    # MONTH-BY-MONTH RANDOM SAMPLING
+                    # TRACK NATURAL MONTHLY DISTRIBUTION
                     # ========================================
 
-                    for month in month_strings:
+                    month_counts = (
+                        relevant["_received_month"]
+                        .value_counts()
+                    )
 
-                        month_rows = relevant[
-                            relevant[
-                                "_received_month"
-                            ]
-                            == month
-                        ].copy()
+                    for month, count in month_counts.items():
 
-                        if month_rows.empty:
-                            continue
+                        if month in available_rows:
 
-                        available_rows[month] += (
-                            len(month_rows)
+                            available_rows[month] += int(
+                                count
+                            )
+
+
+                    # ========================================
+                    # GLOBAL RANDOM SAMPLING
+                    # ========================================
+
+                    if not relevant.empty:
+
+                        # Every eligible complaint receives
+                        # one random sampling key.
+                        relevant["_sample_key"] = (
+                            rng.random(
+                                len(relevant)
+                            )
                         )
 
-
-                        # Remove rows without complaint ID.
-                        month_rows[
-                            "complaint_id"
-                        ] = (
-                            month_rows[
-                                "complaint_id"
-                            ]
-                            .fillna("")
-                            .astype(str)
-                            .str.strip()
-                        )
-
-                        month_rows = month_rows[
-                            month_rows[
-                                "complaint_id"
-                            ]
-                            != ""
-                        ].copy()
-
-                        if month_rows.empty:
-                            continue
-
-
-                        # Generate deterministic random key.
-                        month_rows[
-                            "_sample_key"
-                        ] = rng.random(
-                            len(month_rows)
-                        )
-
-
-                        existing_sample = (
-                            month_samples[
-                                month
-                            ]
-                        )
-
-                        combined = pd.concat(
+                        overall_sample = pd.concat(
                             [
-                                existing_sample,
-                                month_rows,
+                                overall_sample,
+                                relevant,
                             ],
                             ignore_index=True,
                         )
 
-
-                        # Safety against duplicate IDs.
-                        combined = (
-                            combined
+                        # Protect against duplicate IDs
+                        # across chunks.
+                        overall_sample = (
+                            overall_sample
                             .sort_values(
                                 "_sample_key"
                             )
                             .drop_duplicates(
-                                subset=[
-                                    "complaint_id"
-                                ],
+                                subset=["complaint_id"],
                                 keep="first",
                             )
                         )
 
-
-                        # Keep only the lowest random keys.
-                        combined = (
-                            combined
+                        # Keep the 50,000 smallest random keys
+                        # seen across the ENTIRE 12-month
+                        # population.
+                        overall_sample = (
+                            overall_sample
                             .nsmallest(
-                                quotas[month],
+                                TOTAL_RECORDS,
                                 "_sample_key",
                             )
                         )
-
-                        month_samples[
-                            month
-                        ] = combined
 
 
                     print(
                         f"Chunk {chunk_number:,} | "
                         f"Rows scanned: "
                         f"{total_rows_scanned:,} | "
-                        f"Rows in target window: "
+                        f"Valid rows in target window: "
                         f"{relevant_rows_seen:,}"
                     )
 
 
         # ====================================================
-        # VALIDATE MONTHLY SAMPLE
+        # VALIDATE SOURCE POPULATION
         # ====================================================
 
         print(
             "\n========================================"
         )
         print(
-            "MONTHLY SAMPLE VALIDATION"
+            "12-MONTH SOURCE DISTRIBUTION"
         )
         print(
             "========================================"
         )
 
+        total_available = sum(
+            available_rows.values()
+        )
+
         for month in month_strings:
 
-            sampled_count = len(
-                month_samples[month]
-            )
+            count = available_rows[month]
 
-            expected_count = (
-                quotas[month]
+            pct = (
+                100.0
+                * count
+                / total_available
+                if total_available
+                else 0
             )
 
             print(
                 f"{month}: "
-                f"{sampled_count:,} sampled "
-                f"/ {available_rows[month]:,} available "
-                f"/ {expected_count:,} required"
+                f"{count:,} available "
+                f"({pct:.2f}%)"
             )
 
-            if sampled_count != expected_count:
-                raise RuntimeError(
-                    f"Month {month} does not "
-                    "contain enough valid records "
-                    "to satisfy the requested "
-                    f"quota of {expected_count:,}."
-                )
+
+        if len(overall_sample) < TOTAL_RECORDS:
+
+            raise RuntimeError(
+                f"Only {len(overall_sample):,} "
+                f"unique valid complaints were "
+                f"available in the selected "
+                f"12-month window. "
+                f"{TOTAL_RECORDS:,} were requested."
+            )
 
 
         # ====================================================
-        # COMBINE MONTHS
+        # BUILD FINAL SAMPLE
         # ====================================================
 
-        final_df = pd.concat(
-            [
-                month_samples[month]
-                for month
-                in month_strings
-            ],
-            ignore_index=True,
+        final_df = overall_sample.copy()
+
+        # Sort output chronologically for easier inspection.
+        final_df["_sort_received_date"] = (
+            pd.to_datetime(
+                final_df["date_received"],
+                errors="coerce",
+            )
+        )
+
+        final_df = (
+            final_df
+            .sort_values(
+                [
+                    "_sort_received_date",
+                    "complaint_id",
+                ]
+            )
+            .reset_index(drop=True)
         )
 
 
@@ -600,26 +572,61 @@ def main():
         # FINAL CLEANUP
         # ====================================================
 
-        helper_columns = [
-            "_received_date_parsed",
-            "_received_month",
-            "_sample_key",
-        ]
-
-        final_df = final_df.drop(
-            columns=[
-                column
-                for column
-                in helper_columns
-                if column
-                in final_df.columns
-            ]
-        )
-
-
         final_df = final_df[
             OUTPUT_COLUMNS
         ].copy()
+
+
+        # ====================================================
+        # SAMPLE MONTHLY DISTRIBUTION
+        # ====================================================
+
+        parsed_dates = pd.to_datetime(
+            final_df["date_received"],
+            errors="coerce",
+        )
+
+        sample_months = (
+            parsed_dates
+            .dt.to_period("M")
+            .astype(str)
+        )
+
+        sample_month_counts = (
+            sample_months
+            .value_counts()
+        )
+
+        print(
+            "\n========================================"
+        )
+        print(
+            "FINAL SAMPLE MONTHLY DISTRIBUTION"
+        )
+        print(
+            "========================================"
+        )
+
+        for month in month_strings:
+
+            count = int(
+                sample_month_counts.get(
+                    month,
+                    0,
+                )
+            )
+
+            pct = (
+                100.0
+                * count
+                / len(final_df)
+            )
+
+            print(
+                f"{month}: "
+                f"{count:,} sampled "
+                f"({pct:.2f}%)"
+            )
 
 
         # ====================================================
@@ -706,6 +713,7 @@ def main():
 
 
         if total_rows != TOTAL_RECORDS:
+
             raise ValueError(
                 f"Expected {TOTAL_RECORDS:,} "
                 f"records but produced "
@@ -713,20 +721,22 @@ def main():
             )
 
         if unique_ids != TOTAL_RECORDS:
+
             raise ValueError(
                 "Complaint IDs are not unique."
             )
 
         if duplicate_ids != 0:
+
             raise ValueError(
-                "Duplicate complaint IDs "
-                "detected."
+                "Duplicate complaint IDs detected."
             )
 
         if distinct_months != MONTH_COUNT:
+
             raise ValueError(
                 f"Expected {MONTH_COUNT} "
-                "distinct months but found "
+                f"distinct months but found "
                 f"{distinct_months}."
             )
 
@@ -800,6 +810,7 @@ def main():
         if bulk_zip_path.exists():
 
             try:
+
                 bulk_zip_path.unlink()
 
                 print(
@@ -807,6 +818,7 @@ def main():
                 )
 
             except PermissionError:
+
                 print(
                     "\nWarning: temporary ZIP "
                     "could not be removed."

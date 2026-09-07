@@ -2,6 +2,7 @@ version: 2
 
 models:
 
+
   - name: mart_company_risk
     description: >
       Company-level analytical mart containing complaint volume,
@@ -464,3 +465,61 @@ models:
                   - Low
                   - Medium
                   - High        
+  - name: mart_complaint_nlp
+    description: >
+      Complaint-level NLP analytical mart containing topic,
+      sentiment, urgency, and narrative features enriched with
+      complaint dimensional keys for Power BI analysis.
+
+    columns:
+
+      - name: complaint_id
+        description: "Unique CFPB complaint identifier."
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('fct_complaints')
+                field: complaint_id
+
+      - name: topic_id
+        description: "NMF topic cluster identifier."
+        data_tests:
+          - not_null
+
+      - name: topic_name
+        description: "Business-friendly NLP topic label."
+        data_tests:
+          - not_null
+
+      - name: sentiment_score
+        description: "VADER compound sentiment score."
+        data_tests:
+          - not_null
+
+      - name: sentiment_label
+        description: "Complaint sentiment classification."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Negative
+                  - Neutral
+                  - Positive
+
+      - name: urgency_flag
+        description: "Flag identifying urgency or escalation language."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - 0
+                  - 1
+
+      - name: month_start_date
+        description: "Month corresponding to complaint receipt date."
+        data_tests:
+          - not_null                
